@@ -5,8 +5,8 @@ import logging
 import aiomysql
 
 
-def log(sql, args=()):
-    logging.info('SQL: %' % sql)
+def log(sql):
+    logging.info('SQL: %s' % sql)
 
 
 @asyncio.coroutine
@@ -29,7 +29,7 @@ def create_pool(loop, **kw):
 
 @asyncio.coroutine
 def select(sql, args, size=None):
-    log(sql, args)
+    log(sql)
     global __pool
     with (yield from __pool) as conn:
         cur = yield from conn.cursor(aiomysql.DictCursor)
@@ -53,15 +53,15 @@ def execute(sql, args):
             affected = cur.rowcount
             yield from cur.close()
         except BaseException as e:
-            raise
+            raise e
         return affected
 
 
 def create_args_string(num):
-    L = []
+    lis = []
     for n in range(num):
-        L.append('?')
-    return ', '.join(L)
+        lis.append('?')
+    return ', '.join(lis)
 
 
 class Field(object):
@@ -72,7 +72,7 @@ class Field(object):
         self.default = default
 
     def __str__(self):
-        return '<%s, %s:%s>' % (self.__class__.name, self.column_type, self.name)
+        return '<%s, %s:%s>' % (self.__class__.__name__, self.column_type, self.name)
 
 
 class StringField(Field):
@@ -101,26 +101,26 @@ class TextField(Field):
 
 
 class ModelMetaclass(type):
-    def __new__(cls, name, bases, attrs):
+    def __new__(mcs, name, bases, attrs):
         if name == 'Model':
-            return type.__new__(cls, name, bases, attrs)
-        tableName = attrs.get('__table__', None) or name
-        logging.info('found model: %s (table: %s)' % (name, tableName))
+            return type.__new__(mcs, name, bases, attrs)
+        table_name = attrs.get('__table__', None) or name
+        logging.info('found model: %s (table: %s)' % (name, table_name))
         mappings = dict()
         fields = []
-        primaryKey = None
+        primary_key = None
         for k, v in attrs.items():
             if isinstance(v, Field):
                 logging.info('found mapping: %s ==> %s' % (k, v))
                 mappings[k] = v
                 if v.primary_key:
-                    if primaryKey:
-                        raise StandardError('Duplicate primary key for field %s' % v)
-                    primaryKey = k
+                    if primary_key:
+                        raise RuntimeError('Duplicate primary key for field %s' % v)
+                    primary_key = k
                 else:
                     fields.append(k)
-        if not primaryKey:
-            raise StandardError('Primary key not found.')
+        if not primary_key:
+            raise RuntimeError('Primary key not found.')
         for k in mappings.keys():
             attrs.pop(k)
-
+        escaped_fields = list(map(lambda f: '`%s`' % f, fields))
