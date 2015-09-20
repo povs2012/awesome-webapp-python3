@@ -44,16 +44,23 @@ def select(sql, args, size=None):
 
 
 @asyncio.coroutine
-def execute(sql, args):
+def execute(sql, args, autocommit=True):
     log(sql)
     with (yield from __pool) as conn:
+        if not autocommit:
+            yield from conn.begin()
         try:
             cur = yield from conn.cursor()
             yield from cur.execute(sql.replace('?', '%s'), args)
             affected = cur.rowcount
             yield from cur.close()
+            if not autocommit:
+                yield from conn.commit()
         except BaseException as e:
-            raise e
+            logging.exception(e)
+            if not autocommit:
+                yield from conn.rollback()
+            raise
         return affected
 
 
@@ -65,10 +72,10 @@ def create_args_string(num):
 
 
 class Field(object):
-    def __init__(self, name, column_type, primary_key, default):
+    def __init__(self, name, column_type, is_primary_key, default):
         self.name = name
         self.column_type = column_type
-        self.primary_key = primary_key
+        self.is_primary_key = is_primary_key
         self.default = default
 
     def __str__(self):
@@ -76,8 +83,8 @@ class Field(object):
 
 
 class StringField(Field):
-    def __init__(self, name=None, primary_key=False, default=None, ddl='varchar(100)'):
-        super().__init__(name, ddl, primary_key, default)
+    def __init__(self, name=None, is_primary_key=False, default=None, ddl='varchar(100)'):
+        super().__init__(name, ddl, is_primary_key, default)
 
 
 class BooleanField(Field):
@@ -86,13 +93,13 @@ class BooleanField(Field):
 
 
 class IntegerField(Field):
-    def __init__(self, name=None, primary_key=False, default=0):
-        super().__init__(name, 'bigint', primary_key, default)
+    def __init__(self, name=None, is_primary_key=False, default=0):
+        super().__init__(name, 'bigint', is_primary_key, default)
 
 
 class FloatField(Field):
-    def __init__(self, name=None, primary_key=False, default=0.0):
-        super().__init__(name, 'real', primary_key, default)
+    def __init__(self, name=None, is_primary_key=False, default=0.0):
+        super().__init__(name, 'real', is_primary_key, default)
 
 
 class TextField(Field):
@@ -113,29 +120,29 @@ class ModelMetaclass(type):
             if isinstance(v, Field):
                 logging.info('found mapping: %s ==> %s' % (k, v))
                 mappings[k] = v
-                if v.primary_key:
+                if v.is_primary_key:
                     if primary_key:
                         raise RuntimeError('Duplicate primary key for field %s' % v)
-                    primary_key = k
+                    primary_key = k   # 主键
                 else:
-                    fields.append(k)
+                    fields.append(k)  # 普通非主键列
         if not primary_key:
             raise RuntimeError('Primary key not found.')
         for k in mappings.keys():
             attrs.pop(k)
-        escaped_fields = list(map(lambda f: '`%s`' % f, fields))
+        escaped_fields = list(map(lambda f: '%s' % f, fields))
         attrs['__mappings__'] = mappings
         attrs['__table__'] = table_name
         attrs['__primary_key__'] = primary_key
         attrs['__fields__'] = fields
-        attrs['__select__'] = 'select `%s`, %s from `%s`' % (primary_key, ', '.join(escaped_fields), table_name)
-        attrs['__insert__'] = 'insert into `%s`(%s, `%s`) values (%s)' % \
+        attrs['__select__'] = 'select %s, %s from %s' % (primary_key, ', '.join(escaped_fields), table_name)
+        attrs['__insert__'] = 'insert into %s(%s, %s) values (%s)' % \
                               (table_name, ', '.join(escaped_fields), primary_key,
                                create_args_string(len(escaped_fields) + 1))
-        attrs['__update__'] = 'update `%s` set %s where `%s`=?' % \
-                              (table_name, ', '.join(map(lambda f: '`%s`=?' % (mappings.get(f).name or f), fields)),
+        attrs['__update__'] = 'update %s set %s where %s=?' % \
+                              (table_name, ', '.join(map(lambda f: '%s=?' % (mappings.get(f).name or f), fields)),
                                primary_key)
-        attrs['__delete__'] = 'delete from `%s` where `%s`=?' % (table_name, primary_key)
+        attrs['__delete__'] = 'delete from %s where %s=?' % (table_name, primary_key)
         return type.__new__(mcs, name, bases, attrs)
 
 
@@ -167,7 +174,7 @@ class Model(dict, metaclass=ModelMetaclass):
 
     @classmethod
     @asyncio.coroutine
-    def findall(cls, where=None, args=None, **kw):
+    def find_all(cls, where=None, args=None, **kw):
         """find objects by where clause."""
         sql = [cls.__select__]
         if where:
@@ -190,14 +197,14 @@ class Model(dict, metaclass=ModelMetaclass):
                 args.extend(limit)
             else:
                 raise ValueError('Invalid limit value: %s' % str(limit))
-        rs = yield from select(' '.join(sql), args)
+        rs = yield from select(' '.join(sql), args)  # 为什么要加空格?
         return [cls(**r) for r in rs]
 
     @classmethod
     @asyncio.coroutine
     def find_number(cls, select_field, where=None, args=None):
         """find number by select and where."""
-        sql = ['select %s _num_ from `%s`' % (select_field, cls.__table__)]
+        sql = ['select %s _num_ from %s' % (select_field, cls.__table__)]
         if where:
             sql.append('where')
             sql.append(where)
@@ -210,13 +217,13 @@ class Model(dict, metaclass=ModelMetaclass):
     @asyncio.coroutine
     def find(cls, pk):
         """find object by primary key"""
-        rs = yield from select('%s where `%s`=?' % (cls.__select__, cls.__primary_key__), [pk], 1)
+        rs = yield from select('%s where %s=?' % (cls.__select__, cls.__primary_key__), [pk], 1)
         if len(rs) == 0:
             return None
         return cls(**rs[0])
 
     @asyncio.coroutine
-    def save(self):
+    def insert(self):
         args = list(map(self.get_value_or_default, self.__fields__))
         args.append(self.get_value_or_default(self.__primary_key__))
         rows = yield from execute(self.__insert__, args)
@@ -224,7 +231,7 @@ class Model(dict, metaclass=ModelMetaclass):
             logging.warning('failed to insert record: affected rows: %s' % rows)
 
     @asyncio.coroutine
-    def update(self):
+    def update_table(self):
         args = list(map(self.get_value, self.__fields__))
         args.append(self.get_value(self.__primary_key__))
         rows = yield from execute(self.__update__, args)
