@@ -20,7 +20,7 @@ class User(orm.Model):
     admin = orm.BooleanField()
     name = orm.StringField(ddl='varchar(50)')
     image = orm.StringField(ddl='varchar(500)')
-    create_at = orm.FloatField(default=time.time())
+    created_at = orm.FloatField(default=time.time())
 
 
 class Blog(orm.Model):
