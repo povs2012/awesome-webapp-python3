@@ -7,7 +7,8 @@ from models import User
 
 @asyncio.coroutine
 def test():
-    yield from orm.create_pool(loop=loop, host='127.0.0.1', port=3306, user='root', password='root', db='awesome')
+    yield from orm.create_pool(loop=loop, host='192.168.56.101', port=3306,
+                               user='www-data', password='www-data', db='awesome')
 
     u = User(name='Test', email='test@example.com', passwd='1234567890', image='about:blank')
 
