@@ -96,7 +96,7 @@ class RequestHandler(object):
     @asyncio.coroutine
     def __call__(self, request):
         kw = None
-        if self._has_var_kw_arg or self._has_named_kw_args or self._has_request_arg:
+        if self._has_var_kw_arg or self._has_named_kw_args or self._required_kw_args:
             if request.method == 'POST':
                 if not request.content_type:
                     return web.HTTPBadRequest('Missing Content-Type.')
@@ -138,7 +138,7 @@ class RequestHandler(object):
                     return web.HTTPBadRequest('Missing argument: %s' % name)
         logging.info('Call with args: %s' % str(kw))
         try:
-            r = yield from self._func(kw)
+            r = yield from self._func(**kw)  # 必须用**kw, 用kw会出错
             return r
         except APIError as e:
             return dict(error=e.error, data=e.data, message=e.message)
