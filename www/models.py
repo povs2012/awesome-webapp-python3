@@ -46,6 +46,3 @@ class Comment(orm.Model):
     user_image = orm.StringField(ddl='varchar(500)')
     content = orm.TextField()
     created_at = orm.FloatField(default=time.time)
-user = User(id=123, name='Jim')
-user.insert()
-users = User.find_all()

@@ -139,7 +139,7 @@ def datetime_filter(t):
 
 
 @asyncio.coroutine
-def init():
+def init(loop):
     yield from orm.create_pool(loop=loop, **configs.db)
     app = web.Application(loop=loop, middlewares=[logger_factory, auth_factory, response_factory])
     init_jinja2(app, filters=dict(datetime=datetime_filter))
@@ -150,5 +150,5 @@ def init():
     return srv
 
 loop = asyncio.get_event_loop()
-loop.run_until_complete(init())
+loop.run_until_complete(init(loop))
 loop.run_forever()
